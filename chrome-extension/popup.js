@@ -24,18 +24,35 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       if (!articleData) {
+        // Inject Readability + extract directly as fallback
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['readability.js']
+        })
         const extraction = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: () => {
-            return {
-              title: document.title,
-              url: window.location.href,
-              content: document.body.innerText.substring(0, 50000),
-              date: new Date().toLocaleDateString('pl-PL', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-              })
+            try {
+              const clone = document.cloneNode(true)
+              const reader = new Readability(clone)
+              const article = reader.parse()
+              return {
+                title: article?.title || document.title,
+                content: article?.textContent?.trim() || document.body.innerText.substring(0, 50000),
+                contentHtml: article?.content || '',
+                byline: article?.byline || '',
+                url: window.location.href,
+                date: new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })
+              }
+            } catch(e) {
+              return {
+                title: document.title,
+                content: document.body.innerText.substring(0, 50000),
+                contentHtml: '',
+                byline: '',
+                url: window.location.href,
+                date: new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })
+              }
             }
           }
         })

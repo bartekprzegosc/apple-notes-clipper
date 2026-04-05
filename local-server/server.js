@@ -78,8 +78,8 @@ app.post('/clip', authenticate, (req, res) => {
     if (date) meta += ` &nbsp;·&nbsp; 📅 ${date}`
     if (author) meta += ` &nbsp;·&nbsp; ✍️ ${author}`
 
-    let noteBody = `<h1>${title}</h1>`
-    noteBody += `<p>${meta}</p>`
+    // Note title is set via AppleScript name: property — no duplicate h1 in body
+    let noteBody = `<p>${meta}</p>`
     noteBody += `<hr>`
 
     if (contentHtml) {
