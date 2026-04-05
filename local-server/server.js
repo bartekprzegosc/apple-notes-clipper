@@ -72,12 +72,24 @@ app.post('/clip', authenticate, (req, res) => {
     if (!url) return res.status(400).json({ success: false, error: 'Missing required field: url' })
     if (!content) return res.status(400).json({ success: false, error: 'Missing required field: content' })
 
-    let noteBody = `${title}\n\n`
-    noteBody += `🔗 ${url}\n`
-    if (date) noteBody += `📅 ${date}\n`
-    if (author) noteBody += `✍️ ${author}\n`
-    noteBody += `\n────────────────────────────────\n\n`
-    noteBody += content
+    // Build HTML body for rich Apple Notes formatting
+    const { contentHtml } = req.body
+    let meta = `<a href="${url}">${url}</a>`
+    if (date) meta += ` &nbsp;·&nbsp; 📅 ${date}`
+    if (author) meta += ` &nbsp;·&nbsp; ✍️ ${author}`
+
+    let noteBody = `<h1>${title}</h1>`
+    noteBody += `<p>${meta}</p>`
+    noteBody += `<hr>`
+
+    if (contentHtml) {
+      // Use structured HTML from Readability (preserves headings, paragraphs, bold etc.)
+      noteBody += contentHtml
+    } else {
+      // Fallback: plain text wrapped in paragraphs
+      const paragraphs = content.split(/\n{2,}/).filter(p => p.trim())
+      noteBody += paragraphs.map(p => `<p>${p.trim()}</p>`).join('\n')
+    }
 
     const escapedTitle = escapeAppleScript(title)
     const escapedBody = escapeAppleScript(noteBody)

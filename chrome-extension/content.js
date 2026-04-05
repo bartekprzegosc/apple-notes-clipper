@@ -6,10 +6,11 @@ function extractArticle() {
     return {
       title: article?.title || document.title,
       content: article?.textContent?.trim() || '',
+      contentHtml: article?.content || '',
       excerpt: article?.excerpt || '',
       byline: article?.byline || '',
       url: window.location.href,
-      date: new Date().toLocaleDateString('pl-PL', {
+      date: new Date().toLocaleDateString('en-GB', {
         year: 'numeric',
         month: 'long',
         day: 'numeric'
@@ -19,10 +20,11 @@ function extractArticle() {
     return {
       title: document.title,
       content: document.body.innerText.substring(0, 50000),
+      contentHtml: '',
       excerpt: '',
       byline: '',
       url: window.location.href,
-      date: new Date().toLocaleDateString('pl-PL', {
+      date: new Date().toLocaleDateString('en-GB', {
         year: 'numeric',
         month: 'long',
         day: 'numeric'
