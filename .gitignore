@@ -1,0 +1,4 @@
+local-server/node_modules/
+local-server/config.json
+*.log
+.DS_Store

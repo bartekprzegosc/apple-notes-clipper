@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Apple Notes Clipper",
+  "version": "1.0.0",
+  "description": "Clip web articles directly to Apple Notes",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://localhost/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "32": "icons/icon32.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["readability.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
