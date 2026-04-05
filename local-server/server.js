@@ -54,38 +54,43 @@ function authenticate(req, res, next) {
   next()
 }
 
-// Fetch a remote image and return base64 data URI, or '' on failure
-function fetchImageAsBase64(imageUrl) {
+// Fetch a remote image, save to a temp file, return { filePath, ext } or null on failure
+function fetchImageToTempFile(imageUrl) {
   return new Promise((resolve) => {
-    if (!imageUrl) return resolve('')
+    if (!imageUrl) return resolve(null)
     try {
       const parsedUrl = new URL(imageUrl)
       const lib = parsedUrl.protocol === 'https:' ? https : http
       const req = lib.get(imageUrl, { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
         // Follow one redirect
         if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
-          return fetchImageAsBase64(res.headers.location).then(resolve)
+          return fetchImageToTempFile(res.headers.location).then(resolve)
         }
-        if (res.statusCode !== 200) return resolve('')
+        if (res.statusCode !== 200) return resolve(null)
         const contentType = res.headers['content-type'] || 'image/jpeg'
         const mimeType = contentType.split(';')[0].trim()
+        const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' }
+        const ext = extMap[mimeType] || 'jpg'
+        const tmpPath = path.join('/tmp', `notes-hero-${Date.now()}.${ext}`)
         const chunks = []
         let totalSize = 0
         res.on('data', (chunk) => {
           totalSize += chunk.length
-          if (totalSize > 2 * 1024 * 1024) { res.destroy(); return resolve('') } // skip >2MB
+          if (totalSize > 3 * 1024 * 1024) { res.destroy(); return resolve(null) } // skip >3MB
           chunks.push(chunk)
         })
         res.on('end', () => {
-          const b64 = Buffer.concat(chunks).toString('base64')
-          resolve(`data:${mimeType};base64,${b64}`)
+          try {
+            fs.writeFileSync(tmpPath, Buffer.concat(chunks))
+            resolve(tmpPath)
+          } catch (e) { resolve(null) }
         })
-        res.on('error', () => resolve(''))
+        res.on('error', () => resolve(null))
       })
-      req.on('error', () => resolve(''))
-      req.on('timeout', () => { req.destroy(); resolve('') })
+      req.on('error', () => resolve(null))
+      req.on('timeout', () => { req.destroy(); resolve(null) })
     } catch (e) {
-      resolve('')
+      resolve(null)
     }
   })
 }
@@ -118,8 +123,8 @@ app.post('/clip', authenticate, async (req, res) => {
     if (!url) return res.status(400).json({ success: false, error: 'Missing required field: url' })
     if (!content) return res.status(400).json({ success: false, error: 'Missing required field: content' })
 
-    // Fetch hero image as base64 (non-blocking — if it fails, note saves without image)
-    const heroDataUri = await fetchImageAsBase64(imageUrl || '')
+    // Fetch hero image to a temp file (if it fails, note saves without image)
+    const heroTmpPath = await fetchImageToTempFile(imageUrl || '')
 
     // Build HTML body for rich Apple Notes formatting
     const { contentHtml } = req.body
@@ -129,8 +134,9 @@ app.post('/clip', authenticate, async (req, res) => {
 
     // Note title is set via AppleScript name: property — no duplicate h1 in body
     let noteBody = ''
-    if (heroDataUri) {
-      noteBody += `<p><img src="${heroDataUri}" style="max-width:100%"></p>`
+    if (heroTmpPath) {
+      // file:// URL so Apple Notes reads the local image inline (not as attachment)
+      noteBody += `<p><img src="file://${heroTmpPath}"></p>`
     }
     noteBody += `<p>${meta}</p>`
     noteBody += `<hr>`
@@ -168,6 +174,8 @@ tell application "Notes"
 end tell`
 
     execFile('osascript', ['-e', appleScript], { timeout: 15000 }, (error, stdout, stderr) => {
+      // Clean up temp image file regardless of outcome
+      if (heroTmpPath) try { fs.unlinkSync(heroTmpPath) } catch (e) {}
       if (error) {
         console.error('AppleScript error:', stderr || error.message)
         return res.status(500).json({
