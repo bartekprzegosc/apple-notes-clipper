@@ -4,6 +4,8 @@ const { execFile } = require('child_process')
 const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
+const https = require('https')
+const http = require('http')
 
 const CONFIG_PATH = path.join(__dirname, 'config.json')
 
@@ -52,6 +54,50 @@ function authenticate(req, res, next) {
   next()
 }
 
+// Fetch a remote image and return base64 data URI, or '' on failure
+function fetchImageAsBase64(imageUrl) {
+  return new Promise((resolve) => {
+    if (!imageUrl) return resolve('')
+    try {
+      const parsedUrl = new URL(imageUrl)
+      const lib = parsedUrl.protocol === 'https:' ? https : http
+      const req = lib.get(imageUrl, { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+        // Follow one redirect
+        if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
+          return fetchImageAsBase64(res.headers.location).then(resolve)
+        }
+        if (res.statusCode !== 200) return resolve('')
+        const contentType = res.headers['content-type'] || 'image/jpeg'
+        const mimeType = contentType.split(';')[0].trim()
+        const chunks = []
+        let totalSize = 0
+        res.on('data', (chunk) => {
+          totalSize += chunk.length
+          if (totalSize > 2 * 1024 * 1024) { res.destroy(); return resolve('') } // skip >2MB
+          chunks.push(chunk)
+        })
+        res.on('end', () => {
+          const b64 = Buffer.concat(chunks).toString('base64')
+          resolve(`data:${mimeType};base64,${b64}`)
+        })
+        res.on('error', () => resolve(''))
+      })
+      req.on('error', () => resolve(''))
+      req.on('timeout', () => { req.destroy(); resolve('') })
+    } catch (e) {
+      resolve('')
+    }
+  })
+}
+
+// Add breathing room around headings
+function addHeadingSpacing(html) {
+  if (!html) return html
+  return html
+    .replace(/<(h[1-6])/gi, '<br><$1')
+    .replace(/<\/(h[1-6])>/gi, '</$1><br>')
+}
+
 function escapeAppleScript(str) {
   if (!str) return ''
   return str
@@ -64,13 +110,16 @@ app.get('/ping', authenticate, (req, res) => {
   res.json({ status: 'ok', folder: FOLDER })
 })
 
-app.post('/clip', authenticate, (req, res) => {
+app.post('/clip', authenticate, async (req, res) => {
   try {
-    const { title, url, content, author, date } = req.body
+    const { title, url, content, author, date, imageUrl } = req.body
 
     if (!title) return res.status(400).json({ success: false, error: 'Missing required field: title' })
     if (!url) return res.status(400).json({ success: false, error: 'Missing required field: url' })
     if (!content) return res.status(400).json({ success: false, error: 'Missing required field: content' })
+
+    // Fetch hero image as base64 (non-blocking — if it fails, note saves without image)
+    const heroDataUri = await fetchImageAsBase64(imageUrl || '')
 
     // Build HTML body for rich Apple Notes formatting
     const { contentHtml } = req.body
@@ -79,12 +128,16 @@ app.post('/clip', authenticate, (req, res) => {
     if (author) meta += ` &nbsp;·&nbsp; ✍️ ${author}`
 
     // Note title is set via AppleScript name: property — no duplicate h1 in body
-    let noteBody = `<p>${meta}</p>`
+    let noteBody = ''
+    if (heroDataUri) {
+      noteBody += `<p><img src="${heroDataUri}" style="max-width:100%"></p>`
+    }
+    noteBody += `<p>${meta}</p>`
     noteBody += `<hr>`
 
     if (contentHtml) {
-      // Use structured HTML from Readability (preserves headings, paragraphs, bold etc.)
-      noteBody += contentHtml
+      // Use structured HTML from Readability, with heading spacing added
+      noteBody += addHeadingSpacing(contentHtml)
     } else {
       // Fallback: plain text wrapped in paragraphs
       const paragraphs = content.split(/\n{2,}/).filter(p => p.trim())

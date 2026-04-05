@@ -1,3 +1,17 @@
+function getHeroImage() {
+  const selectors = [
+    'meta[property="og:image"]',
+    'meta[name="twitter:image"]',
+    'meta[name="twitter:image:src"]',
+    'meta[property="og:image:secure_url"]'
+  ]
+  for (const sel of selectors) {
+    const el = document.querySelector(sel)
+    if (el && el.content) return el.content
+  }
+  return ''
+}
+
 function extractArticle() {
   try {
     const documentClone = document.cloneNode(true)
@@ -9,6 +23,7 @@ function extractArticle() {
       contentHtml: article?.content || '',
       excerpt: article?.excerpt || '',
       byline: article?.byline || '',
+      imageUrl: getHeroImage(),
       url: window.location.href,
       date: new Date().toLocaleDateString('en-GB', {
         year: 'numeric',
@@ -23,6 +38,7 @@ function extractArticle() {
       contentHtml: '',
       excerpt: '',
       byline: '',
+      imageUrl: getHeroImage(),
       url: window.location.href,
       date: new Date().toLocaleDateString('en-GB', {
         year: 'numeric',
