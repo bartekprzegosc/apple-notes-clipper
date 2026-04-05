@@ -86,10 +86,17 @@ app.post('/clip', authenticate, (req, res) => {
     const appleScript = `
 tell application "Notes"
   tell account "iCloud"
-    if not (exists folder "${escapedFolder}") then
-      make new folder with properties {name:"${escapedFolder}"}
+    set targetFolder to missing value
+    repeat with f in every folder
+      if name of f is "${escapedFolder}" then
+        set targetFolder to f
+        exit repeat
+      end if
+    end repeat
+    if targetFolder is missing value then
+      set targetFolder to make new folder with properties {name:"${escapedFolder}"}
     end if
-    tell folder "${escapedFolder}"
+    tell targetFolder
       make new note with properties {name:"${escapedTitle}", body:"${escapedBody}"}
     end tell
   end tell
