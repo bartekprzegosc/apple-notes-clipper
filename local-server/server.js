@@ -117,7 +117,7 @@ app.get('/ping', authenticate, (req, res) => {
 
 app.post('/clip', authenticate, async (req, res) => {
   try {
-    const { title, url, content, author, date, imageUrl } = req.body
+    const { title, url, content, contentHtml, author, date, imageUrl, description, publishedDate, savedDate, byline } = req.body
 
     if (!title) return res.status(400).json({ success: false, error: 'Missing required field: title' })
     if (!url) return res.status(400).json({ success: false, error: 'Missing required field: url' })
@@ -126,26 +126,28 @@ app.post('/clip', authenticate, async (req, res) => {
     // Fetch hero image to a temp file (if it fails, note saves without image)
     const heroTmpPath = await fetchImageToTempFile(imageUrl || '')
 
-    // Build HTML body for rich Apple Notes formatting
-    const { contentHtml } = req.body
-    let meta = `<a href="${url}">${url}</a>`
-    if (date) meta += ` &nbsp;·&nbsp; 📅 ${date}`
-    if (author) meta += ` &nbsp;·&nbsp; ✍️ ${author}`
+    // Derive display values
+    let domain = url
+    try { domain = new URL(url).hostname.replace(/^www\./, '') } catch (e) {}
+    const authorDisplay = author || byline || ''
+    const pubDate = publishedDate || date || ''
+    const clipDate = savedDate || new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })
 
-    // Note title is set via AppleScript name: property — no duplicate h1 in body
+    // Build Obsidian-style metadata header
     let noteBody = ''
     if (heroTmpPath) {
-      // file:// URL so Apple Notes reads the local image inline (not as attachment)
       noteBody += `<p><img src="file://${heroTmpPath}"></p>`
     }
-    noteBody += `<p>${meta}</p>`
+    noteBody += `<p><b>🔗 Source:</b> &nbsp;<a href="${url}">${domain}</a></p>`
+    if (authorDisplay) noteBody += `<p><b>✍️ Author:</b> &nbsp;${authorDisplay}</p>`
+    if (pubDate)       noteBody += `<p><b>📅 Published:</b> &nbsp;${pubDate}</p>`
+    noteBody +=        `<p><b>🗓 Saved:</b> &nbsp;${clipDate}</p>`
+    if (description)   noteBody += `<br><p><i>${description}</i></p>`
     noteBody += `<hr>`
 
     if (contentHtml) {
-      // Use structured HTML from Readability, with heading spacing added
       noteBody += addHeadingSpacing(contentHtml)
     } else {
-      // Fallback: plain text wrapped in paragraphs
       const paragraphs = content.split(/\n{2,}/).filter(p => p.trim())
       noteBody += paragraphs.map(p => `<p>${p.trim()}</p>`).join('\n')
     }

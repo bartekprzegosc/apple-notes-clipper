@@ -32,31 +32,55 @@ document.addEventListener('DOMContentLoaded', async () => {
         const extraction = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: () => {
+            function getMeta(...selectors) {
+              for (const sel of selectors) {
+                const el = document.querySelector(sel)
+                if (el && el.content) return el.content.trim()
+              }
+              return ''
+            }
+            function getPublishedDate() {
+              const raw = getMeta(
+                'meta[property="article:published_time"]',
+                'meta[property="og:article:published_time"]',
+                'meta[name="publish-date"]',
+                'meta[itemprop="datePublished"]'
+              )
+              if (raw) { const d = new Date(raw); if (!isNaN(d)) return d.toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' }) }
+              try {
+                for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+                  const objs = [].concat(JSON.parse(s.textContent))
+                  for (const o of objs) {
+                    const dp = o.datePublished || o.dateCreated
+                    if (dp) { const d = new Date(dp); if (!isNaN(d)) return d.toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' }) }
+                  }
+                }
+              } catch(e) {}
+              return ''
+            }
+            const imageUrl = getMeta('meta[property="og:image"]', 'meta[name="twitter:image"]', 'meta[name="twitter:image:src"]')
+            const description = getMeta('meta[property="og:description"]', 'meta[name="twitter:description"]', 'meta[name="description"]')
+            const publishedDate = getPublishedDate()
+            const savedDate = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })
             try {
               const clone = document.cloneNode(true)
               const reader = new Readability(clone)
               const article = reader.parse()
-              const ogImage = document.querySelector('meta[property="og:image"]')?.content
-            || document.querySelector('meta[name="twitter:image"]')?.content || ''
-          return {
+              return {
                 title: article?.title || document.title,
                 content: article?.textContent?.trim() || document.body.innerText.substring(0, 50000),
                 contentHtml: article?.content || '',
                 byline: article?.byline || '',
-                imageUrl: ogImage,
-                url: window.location.href,
-                date: new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })
+                imageUrl, description, publishedDate, savedDate,
+                url: window.location.href
               }
             } catch(e) {
-              const ogImage = document.querySelector('meta[property="og:image"]')?.content || ''
               return {
                 title: document.title,
                 content: document.body.innerText.substring(0, 50000),
-                contentHtml: '',
-                byline: '',
-                imageUrl: ogImage,
-                url: window.location.href,
-                date: new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })
+                contentHtml: '', byline: '',
+                imageUrl, description, publishedDate, savedDate,
+                url: window.location.href
               }
             }
           }
