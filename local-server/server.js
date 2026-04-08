@@ -105,6 +105,40 @@ function addHeadingSpacing(html) {
     .replace(/<h[56][^>]*>([\s\S]*?)<\/h[56]>/gi, '<p><br><b><i>$1</i></b></p>')
 }
 
+// Download all remote images in HTML to temp files, replace src with file:// URLs
+// Returns { html, tempFiles[] } — tempFiles must be cleaned up after use
+async function inlineImagesInHtml(html) {
+  if (!html) return { html, tempFiles: [] }
+
+  // Collect unique remote image URLs (max 15 images per article)
+  const srcRegex = /(<img[^>]*?\ssrc=")((https?:\/\/)[^"]+)(")/gi
+  const matches = []
+  let m
+  while ((m = srcRegex.exec(html)) !== null) {
+    matches.push({ original: m[0], prefix: m[1], url: m[2], suffix: m[4] })
+    if (matches.length >= 15) break
+  }
+
+  // Download all images in parallel
+  const results = await Promise.all(
+    matches.map(async (item) => {
+      const tmpPath = await fetchImageToTempFile(item.url)
+      return { ...item, tmpPath }
+    })
+  )
+
+  // Replace each matched src with file:// path (or keep original if download failed)
+  let processed = html
+  for (const r of results) {
+    if (r.tmpPath) {
+      processed = processed.replace(r.original, `${r.prefix}file://${r.tmpPath}${r.suffix}`)
+    }
+  }
+
+  const tempFiles = results.filter(r => r.tmpPath).map(r => r.tmpPath)
+  return { html: processed, tempFiles }
+}
+
 function escapeAppleScript(str) {
   if (!str) return ''
   return str
@@ -125,8 +159,12 @@ app.post('/clip', authenticate, async (req, res) => {
     if (!url) return res.status(400).json({ success: false, error: 'Missing required field: url' })
     if (!content) return res.status(400).json({ success: false, error: 'Missing required field: content' })
 
-    // Fetch hero image to a temp file (if it fails, note saves without image)
-    const heroTmpPath = await fetchImageToTempFile(imageUrl || '')
+    // Fetch hero image + inline all article images in parallel
+    const [heroTmpPath, inlined] = await Promise.all([
+      fetchImageToTempFile(imageUrl || ''),
+      inlineImagesInHtml(contentHtml || '')
+    ])
+    const allTempFiles = [heroTmpPath, ...inlined.tempFiles].filter(Boolean)
 
     // Derive display values
     let domain = url
@@ -147,8 +185,8 @@ app.post('/clip', authenticate, async (req, res) => {
     if (description)   noteBody += `<br><p><i>${description}</i></p>`
     noteBody += `<hr>`
 
-    if (contentHtml) {
-      noteBody += addHeadingSpacing(contentHtml)
+    if (inlined.html) {
+      noteBody += addHeadingSpacing(inlined.html)
     } else {
       const paragraphs = content.split(/\n{2,}/).filter(p => p.trim())
       noteBody += paragraphs.map(p => `<p>${p.trim()}</p>`).join('\n')
@@ -177,9 +215,9 @@ tell application "Notes"
   end tell
 end tell`
 
-    execFile('osascript', ['-e', appleScript], { timeout: 15000 }, (error, stdout, stderr) => {
-      // Clean up temp image file regardless of outcome
-      if (heroTmpPath) try { fs.unlinkSync(heroTmpPath) } catch (e) {}
+    execFile('osascript', ['-e', appleScript], { timeout: 30000 }, (error, stdout, stderr) => {
+      // Clean up all temp image files regardless of outcome
+      for (const f of allTempFiles) try { fs.unlinkSync(f) } catch (e) {}
       if (error) {
         console.error('AppleScript error:', stderr || error.message)
         return res.status(500).json({
