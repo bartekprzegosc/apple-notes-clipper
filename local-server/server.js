@@ -95,12 +95,14 @@ function fetchImageToTempFile(imageUrl) {
   })
 }
 
-// Add breathing room around headings
+// Convert headings to bold (Apple Notes ignores h1-h6 via AppleScript)
+// h1/h2 → bold + underline, h3/h4 → bold, h5/h6 → bold italic
 function addHeadingSpacing(html) {
   if (!html) return html
   return html
-    .replace(/<(h[1-6])/gi, '<br><$1')
-    .replace(/<\/(h[1-6])>/gi, '</$1><br>')
+    .replace(/<h[12][^>]*>([\s\S]*?)<\/h[12]>/gi, '<p><br><b><u>$1</u></b></p>')
+    .replace(/<h[34][^>]*>([\s\S]*?)<\/h[34]>/gi, '<p><br><b>$1</b></p>')
+    .replace(/<h[56][^>]*>([\s\S]*?)<\/h[56]>/gi, '<p><br><b><i>$1</i></b></p>')
 }
 
 function escapeAppleScript(str) {
