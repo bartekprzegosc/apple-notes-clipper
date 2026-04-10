@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
-  chrome.storage.sync.get(['token', 'port', 'notesFolder'], (config) => {
+  chrome.storage.local.get(['token', 'port', 'notesFolder'], (config) => {
     document.getElementById('port').value = config.port || 3333
     document.getElementById('token').value = config.token || ''
     document.getElementById('notesFolder').value = config.notesFolder || 'Media Vault'
@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return
     }
 
-    chrome.storage.sync.set(config, () => {
+    chrome.storage.local.set(config, () => {
       setStatus('Settings saved!', 'success')
     })
   })

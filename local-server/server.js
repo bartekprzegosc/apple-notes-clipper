@@ -28,6 +28,15 @@ const FOLDER = config.notesFolder || 'Media Vault'
 
 const app = express()
 
+// ─── Security headers ────────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff')
+  res.set('X-Frame-Options', 'DENY')
+  res.set('Cache-Control', 'no-store')
+  next()
+})
+
+// ─── CORS: only chrome-extension:// origins ──────────────────────────────────
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || origin.startsWith('chrome-extension://')) {
@@ -38,8 +47,25 @@ app.use(cors({
   }
 }))
 
-app.use(express.json({ limit: '5mb' }))
+// ─── Body limit: 500 KB is plenty for article metadata ───────────────────────
+app.use(express.json({ limit: '500kb' }))
 
+// ─── Simple in-memory rate limiter: max 10 requests/minute per token ─────────
+const rateLimitMap = new Map()
+function rateLimit(req, res, next) {
+  const now = Date.now()
+  const key = req.headers.authorization || req.ip
+  const entry = rateLimitMap.get(key) || { count: 0, resetAt: now + 60000 }
+  if (now > entry.resetAt) { entry.count = 0; entry.resetAt = now + 60000 }
+  entry.count++
+  rateLimitMap.set(key, entry)
+  if (entry.count > 10) {
+    return res.status(429).json({ success: false, error: 'Too many requests. Try again in a minute.' })
+  }
+  next()
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -54,34 +80,51 @@ function authenticate(req, res, next) {
   next()
 }
 
-// Fetch a remote image, save to a temp file, return { filePath, ext } or null on failure
-function fetchImageToTempFile(imageUrl) {
+// ─── Validate that a URL is http/https and not a private/local address ────────
+function isAllowedImageUrl(rawUrl) {
+  try {
+    const u = new URL(rawUrl)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+    const h = u.hostname
+    // Block private / loopback ranges
+    if (/^localhost$/i.test(h)) return false
+    if (/^127\.|^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false
+    if (/^::1$|^fc00:|^fe80:/.test(h)) return false
+    return true
+  } catch (e) { return false }
+}
+
+// ─── Fetch remote image to a secure temp file (max 3 redirects) ──────────────
+function fetchImageToTempFile(imageUrl, depth = 0) {
   return new Promise((resolve) => {
-    if (!imageUrl) return resolve(null)
+    if (!imageUrl || depth > 2) return resolve(null)
+    if (!isAllowedImageUrl(imageUrl)) return resolve(null)
     try {
       const parsedUrl = new URL(imageUrl)
       const lib = parsedUrl.protocol === 'https:' ? https : http
-      const req = lib.get(imageUrl, { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
-        // Follow one redirect
+      const req = lib.get(imageUrl, { timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
         if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
-          return fetchImageToTempFile(res.headers.location).then(resolve)
+          return fetchImageToTempFile(res.headers.location, depth + 1).then(resolve)
         }
         if (res.statusCode !== 200) return resolve(null)
-        const contentType = res.headers['content-type'] || 'image/jpeg'
+        const contentType = res.headers['content-type'] || ''
         const mimeType = contentType.split(';')[0].trim()
         const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' }
-        const ext = extMap[mimeType] || 'jpg'
-        const tmpPath = path.join('/tmp', `notes-hero-${Date.now()}.${ext}`)
+        if (!extMap[mimeType]) return resolve(null) // reject unexpected MIME types
+        const ext = extMap[mimeType]
+        // Secure random filename — not guessable
+        const rand = crypto.randomBytes(12).toString('hex')
+        const tmpPath = path.join('/tmp', `nc-img-${rand}.${ext}`)
         const chunks = []
         let totalSize = 0
         res.on('data', (chunk) => {
           totalSize += chunk.length
-          if (totalSize > 3 * 1024 * 1024) { res.destroy(); return resolve(null) } // skip >3MB
+          if (totalSize > 3 * 1024 * 1024) { res.destroy(); return resolve(null) }
           chunks.push(chunk)
         })
         res.on('end', () => {
           try {
-            fs.writeFileSync(tmpPath, Buffer.concat(chunks))
+            fs.writeFileSync(tmpPath, Buffer.concat(chunks), { mode: 0o600 }) // owner-only
             resolve(tmpPath)
           } catch (e) { resolve(null) }
         })
@@ -95,8 +138,7 @@ function fetchImageToTempFile(imageUrl) {
   })
 }
 
-// Convert headings to bold (Apple Notes ignores h1-h6 via AppleScript)
-// h1/h2 → bold + underline, h3/h4 → bold, h5/h6 → bold italic
+// ─── Convert h1-h6 to bold (Apple Notes ignores heading tags via AppleScript) ─
 function addHeadingSpacing(html) {
   if (!html) return html
   return html
@@ -105,12 +147,9 @@ function addHeadingSpacing(html) {
     .replace(/<h[56][^>]*>([\s\S]*?)<\/h[56]>/gi, '<p><br><b><i>$1</i></b></p>')
 }
 
-// Download all remote images in HTML to temp files, replace src with file:// URLs
-// Returns { html, tempFiles[] } — tempFiles must be cleaned up after use
+// ─── Inline remote images in HTML → file:// paths ────────────────────────────
 async function inlineImagesInHtml(html) {
   if (!html) return { html, tempFiles: [] }
-
-  // Collect unique remote image URLs (max 15 images per article)
   const srcRegex = /(<img[^>]*?\ssrc=")((https?:\/\/)[^"]+)(")/gi
   const matches = []
   let m
@@ -118,69 +157,88 @@ async function inlineImagesInHtml(html) {
     matches.push({ original: m[0], prefix: m[1], url: m[2], suffix: m[4] })
     if (matches.length >= 15) break
   }
-
-  // Download all images in parallel
   const results = await Promise.all(
     matches.map(async (item) => {
       const tmpPath = await fetchImageToTempFile(item.url)
       return { ...item, tmpPath }
     })
   )
-
-  // Replace each matched src with file:// path (or keep original if download failed)
   let processed = html
   for (const r of results) {
     if (r.tmpPath) {
       processed = processed.replace(r.original, `${r.prefix}file://${r.tmpPath}${r.suffix}`)
     }
   }
-
   const tempFiles = results.filter(r => r.tmpPath).map(r => r.tmpPath)
   return { html: processed, tempFiles }
 }
 
+// ─── Escape special chars for AppleScript string literals ────────────────────
 function escapeAppleScript(str) {
   if (!str) return ''
   return str
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
+    .replace(/\\/g, '\\\\')   // backslash first
+    .replace(/"/g, '\\"')     // double quotes
+    .replace(/\r/g, '')       // strip carriage returns
+    .replace(/\n/g, '\\n')    // newlines
+    .replace(/\t/g, ' ')      // tabs → space
+    .replace(/\0/g, '')       // null bytes
 }
 
+// ─── Sanitise a plain-text field (strip control chars, limit length) ──────────
+function sanitiseField(str, maxLen = 500) {
+  if (!str) return ''
+  return str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, maxLen)
+}
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
 app.get('/ping', authenticate, (req, res) => {
   res.json({ status: 'ok', folder: FOLDER })
 })
 
-app.post('/clip', authenticate, async (req, res) => {
+app.post('/clip', authenticate, rateLimit, async (req, res) => {
   try {
-    const { title, url, content, contentHtml, author, date, imageUrl, description, publishedDate, savedDate, byline } = req.body
+    const raw = req.body
+    const title       = sanitiseField(raw.title, 500)
+    const url         = sanitiseField(raw.url, 2048)
+    const content     = sanitiseField(raw.content, 200000)
+    const contentHtml = typeof raw.contentHtml === 'string' ? raw.contentHtml.slice(0, 500000) : ''
+    const author      = sanitiseField(raw.author || raw.byline, 200)
+    const description = sanitiseField(raw.description, 500)
+    const publishedDate = sanitiseField(raw.publishedDate || raw.date, 100)
+    const savedDate   = sanitiseField(raw.savedDate, 100)
+    const imageUrl    = sanitiseField(raw.imageUrl, 2048)
 
-    if (!title) return res.status(400).json({ success: false, error: 'Missing required field: title' })
-    if (!url) return res.status(400).json({ success: false, error: 'Missing required field: url' })
+    if (!title)   return res.status(400).json({ success: false, error: 'Missing required field: title' })
+    if (!url)     return res.status(400).json({ success: false, error: 'Missing required field: url' })
     if (!content) return res.status(400).json({ success: false, error: 'Missing required field: content' })
+
+    // Validate article URL is a real http/https URL
+    try {
+      const u = new URL(url)
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error()
+    } catch {
+      return res.status(400).json({ success: false, error: 'Invalid article URL' })
+    }
 
     // Fetch hero image + inline all article images in parallel
     const [heroTmpPath, inlined] = await Promise.all([
-      fetchImageToTempFile(imageUrl || ''),
-      inlineImagesInHtml(contentHtml || '')
+      isAllowedImageUrl(imageUrl) ? fetchImageToTempFile(imageUrl) : Promise.resolve(null),
+      inlineImagesInHtml(contentHtml)
     ])
     const allTempFiles = [heroTmpPath, ...inlined.tempFiles].filter(Boolean)
 
     // Derive display values
     let domain = url
     try { domain = new URL(url).hostname.replace(/^www\./, '') } catch (e) {}
-    const authorDisplay = author || byline || ''
-    const pubDate = publishedDate || date || ''
     const clipDate = savedDate || new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })
 
     // Build Obsidian-style metadata header
     let noteBody = ''
-    if (heroTmpPath) {
-      noteBody += `<p><img src="file://${heroTmpPath}"></p>`
-    }
+    if (heroTmpPath) noteBody += `<p><img src="file://${heroTmpPath}"></p>`
     noteBody += `<p><b>🔗 Source:</b> &nbsp;<a href="${url}">${domain}</a></p>`
-    if (authorDisplay) noteBody += `<p><b>✍️ Author:</b> &nbsp;${authorDisplay}</p>`
-    if (pubDate)       noteBody += `<p><b>📅 Published:</b> &nbsp;${pubDate}</p>`
+    if (author)        noteBody += `<p><b>✍️ Author:</b> &nbsp;${author}</p>`
+    if (publishedDate) noteBody += `<p><b>📅 Published:</b> &nbsp;${publishedDate}</p>`
     noteBody +=        `<p><b>🗓 Saved:</b> &nbsp;${clipDate}</p>`
     if (description)   noteBody += `<br><p><i>${description}</i></p>`
     noteBody += `<hr>`
@@ -192,8 +250,8 @@ app.post('/clip', authenticate, async (req, res) => {
       noteBody += paragraphs.map(p => `<p>${p.trim()}</p>`).join('\n')
     }
 
-    const escapedTitle = escapeAppleScript(title)
-    const escapedBody = escapeAppleScript(noteBody)
+    const escapedTitle  = escapeAppleScript(title)
+    const escapedBody   = escapeAppleScript(noteBody)
     const escapedFolder = escapeAppleScript(FOLDER)
 
     const appleScript = `
@@ -216,14 +274,11 @@ tell application "Notes"
 end tell`
 
     execFile('osascript', ['-e', appleScript], { timeout: 30000 }, (error, stdout, stderr) => {
-      // Clean up all temp image files regardless of outcome
       for (const f of allTempFiles) try { fs.unlinkSync(f) } catch (e) {}
       if (error) {
         console.error('AppleScript error:', stderr || error.message)
-        return res.status(500).json({
-          success: false,
-          error: 'Failed to save note: ' + (stderr || error.message)
-        })
+        // Return generic message — don't leak internals to client
+        return res.status(500).json({ success: false, error: 'Failed to save note to Apple Notes.' })
       }
       res.json({ success: true, message: 'Saved to Notes' })
     })
@@ -231,6 +286,15 @@ end tell`
     console.error('Clip error:', err.message)
     res.status(500).json({ success: false, error: 'Internal server error' })
   }
+})
+
+// ─── Cleanup temp files on graceful shutdown ──────────────────────────────────
+process.on('SIGTERM', () => {
+  try {
+    const files = fs.readdirSync('/tmp').filter(f => f.startsWith('nc-img-'))
+    files.forEach(f => { try { fs.unlinkSync(path.join('/tmp', f)) } catch (e) {} })
+  } catch (e) {}
+  process.exit(0)
 })
 
 app.listen(PORT, '127.0.0.1', () => {

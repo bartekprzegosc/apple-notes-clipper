@@ -24,7 +24,7 @@ function setup() {
     config.port = config.port || 3333
     config.notesFolder = config.notesFolder || 'Media Vault'
 
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2))
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 })
 
     console.log('')
     console.log('Apple Notes Clipper — Setup Complete')

@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function checkServerStatus() {
   const config = await new Promise(resolve => {
-    chrome.storage.sync.get(['token', 'port'], resolve)
+    chrome.storage.local.get(['token', 'port'], resolve)
   })
 
   try {

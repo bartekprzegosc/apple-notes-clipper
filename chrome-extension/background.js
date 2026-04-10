@@ -1,6 +1,6 @@
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'clipToNotes') {
-    chrome.storage.sync.get(['token', 'port', 'notesFolder'], async (config) => {
+    chrome.storage.local.get(['token', 'port', 'notesFolder'], async (config) => {
       try {
         const port = config.port || 3333
         const token = config.token || ''
