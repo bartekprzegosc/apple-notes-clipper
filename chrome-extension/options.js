@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setStatus('Testing...', 'info')
 
     try {
-      const res = await fetch(`http://localhost:${port}/ping`, {
+      const res = await fetch(`http://127.0.0.1:${port}/ping`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       const data = await res.json()

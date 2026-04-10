@@ -191,6 +191,17 @@ function sanitiseField(str, maxLen = 500) {
   return str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, maxLen)
 }
 
+// ─── HTML-escape plain text before embedding in HTML ─────────────────────────
+function htmlEscape(str) {
+  if (!str) return ''
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.get('/ping', authenticate, (req, res) => {
   res.json({ status: 'ok', folder: FOLDER })
@@ -234,28 +245,30 @@ app.post('/clip', authenticate, rateLimit, async (req, res) => {
     const clipDate = savedDate || new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })
 
     // Build Obsidian-style metadata header
+    // htmlEscape all plain-text fields to prevent HTML injection into note body
     let noteBody = ''
     if (heroTmpPath) noteBody += `<p><img src="file://${heroTmpPath}"></p>`
-    noteBody += `<p><b>🔗 Source:</b> &nbsp;<a href="${url}">${domain}</a></p>`
-    if (author)        noteBody += `<p><b>✍️ Author:</b> &nbsp;${author}</p>`
-    if (publishedDate) noteBody += `<p><b>📅 Published:</b> &nbsp;${publishedDate}</p>`
-    noteBody +=        `<p><b>🗓 Saved:</b> &nbsp;${clipDate}</p>`
-    if (description)   noteBody += `<br><p><i>${description}</i></p>`
+    noteBody += `<p><b>🔗 Source:</b> &nbsp;<a href="${htmlEscape(url)}">${htmlEscape(domain)}</a></p>`
+    if (author)        noteBody += `<p><b>✍️ Author:</b> &nbsp;${htmlEscape(author)}</p>`
+    if (publishedDate) noteBody += `<p><b>📅 Published:</b> &nbsp;${htmlEscape(publishedDate)}</p>`
+    noteBody +=        `<p><b>🗓 Saved:</b> &nbsp;${htmlEscape(clipDate)}</p>`
+    if (description)   noteBody += `<br><p><i>${htmlEscape(description)}</i></p>`
     noteBody += `<hr>`
 
     if (inlined.html) {
       noteBody += addHeadingSpacing(inlined.html)
     } else {
       const paragraphs = content.split(/\n{2,}/).filter(p => p.trim())
-      noteBody += paragraphs.map(p => `<p>${p.trim()}</p>`).join('\n')
+      noteBody += paragraphs.map(p => `<p>${htmlEscape(p.trim())}</p>`).join('\n')
     }
 
+    // Write AppleScript to a temp file instead of passing via -e argument.
+    // This avoids OS arg-length limits on large articles and reduces injection surface.
     const escapedTitle  = escapeAppleScript(title)
     const escapedBody   = escapeAppleScript(noteBody)
     const escapedFolder = escapeAppleScript(FOLDER)
 
-    const appleScript = `
-tell application "Notes"
+    const scriptContent = `tell application "Notes"
   tell account "iCloud"
     set targetFolder to missing value
     repeat with f in every folder
@@ -273,7 +286,12 @@ tell application "Notes"
   end tell
 end tell`
 
-    execFile('osascript', ['-e', appleScript], { timeout: 30000 }, (error, stdout, stderr) => {
+    const scriptRand = crypto.randomBytes(12).toString('hex')
+    const scriptPath = path.join('/tmp', `nc-script-${scriptRand}.applescript`)
+    fs.writeFileSync(scriptPath, scriptContent, { mode: 0o600 })
+    allTempFiles.push(scriptPath)
+
+    execFile('osascript', [scriptPath], { timeout: 30000 }, (error, stdout, stderr) => {
       for (const f of allTempFiles) try { fs.unlinkSync(f) } catch (e) {}
       if (error) {
         console.error('AppleScript error:', stderr || error.message)

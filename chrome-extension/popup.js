@@ -114,7 +114,7 @@ async function checkServerStatus() {
 
   try {
     const port = config.port || 3333
-    const res = await fetch(`http://localhost:${port}/ping`, {
+    const res = await fetch(`http://127.0.0.1:${port}/ping`, {
       headers: { 'Authorization': `Bearer ${config.token || ''}` }
     })
     const data = await res.json()

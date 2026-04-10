@@ -4,7 +4,10 @@
   "version": "1.0.0",
   "description": "Clip web articles directly to Apple Notes",
   "permissions": ["activeTab", "scripting", "storage"],
-  "host_permissions": ["http://localhost/*"],
+  "host_permissions": ["http://127.0.0.1:3333/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
