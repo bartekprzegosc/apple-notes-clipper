@@ -11,7 +11,7 @@ A Chrome extension that clips web articles directly to Apple Notes via a local b
 ## Requirements
 
 - macOS (Apple Notes + AppleScript required)
-- Google Chrome
+- Any Chromium-based browser (Chrome, Arc, Brave, Edge)
 - Node.js (v16+)
 
 ## Installation
@@ -30,9 +30,9 @@ This will:
 - Generate a secret auth token
 - Start the local server as a Launch Agent (auto-starts on login)
 
-### 2. Load the Chrome extension
+### 2. Load the extension
 
-1. Open Chrome → `chrome://extensions`
+1. Open your browser → `chrome://extensions` (or `arc://extensions` in Arc)
 2. Enable **Developer Mode** (top right toggle)
 3. Click **Load unpacked**
 4. Select the `chrome-extension/` folder
@@ -74,22 +74,58 @@ launchctl unload ~/Library/LaunchAgents/com.bartekprzegosc.notesclipper.plist
 launchctl load ~/Library/LaunchAgents/com.bartekprzegosc.notesclipper.plist
 ```
 
-Or run manually:
+Or run manually for debugging:
 ```bash
 cd local-server && node server.js
 ```
 
-### Auth failed
+### Auth failed (most common issue)
 
-Make sure the token in the Chrome extension settings matches `local-server/config.json`.
+The extension stores the token in browser local storage. This gets wiped when you:
+- Reload the extension in `chrome://extensions`
+- Remove and re-add the extension
+- The browser clears extension storage
+
+**Step 1 — find your token.** The server reads its token from `config.json` at startup. Find it:
+
+```bash
+cat ~/apple-notes-clipper/local-server/config.json
+```
+
+You'll see something like:
+```json
+{
+  "token": "19643baf2bb215bf2c243e4d0eb49f2a78d870f64b60579f26cbc7e669af9dbb",
+  "port": 3333,
+  "notesFolder": "Media Vault"
+}
+```
+
+**Step 2 — open Settings.** Click the extension icon and click ⚙️ Settings. If the Settings button doesn't respond (common in Arc), navigate directly to the options page in the address bar:
+
+```
+chrome-extension://YOUR_EXTENSION_ID/options.html
+```
+
+To find your extension ID: open `chrome://extensions` (or `arc://extensions`), enable Developer Mode, and look for Apple Notes Clipper — the ID is shown below the name.
+
+**Step 3 — paste the token** into the Token field, click Save, then Test Connection.
+
+### Settings button doesn't open (Arc browser)
+
+Arc sometimes ignores `chrome.runtime.openOptionsPage()`. Navigate to the options page directly:
+
+1. Open `arc://extensions`
+2. Find Apple Notes Clipper, copy the extension ID
+3. Navigate to: `chrome-extension://EXTENSION_ID/options.html`
 
 ### Notes not appearing
 
 - Open Apple Notes and check the iCloud account is active
 - Verify the folder name matches in both the extension settings and `config.json`
-- Check logs: `tail -f ~/Library/Logs/notesclipper.log`
+- Check server logs: `tail -f ~/Library/Logs/notesclipper.log`
 
-### Reinstall
+### Reinstall from scratch
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.bartekprzegosc.notesclipper.plist
@@ -97,6 +133,8 @@ rm ~/Library/LaunchAgents/com.bartekprzegosc.notesclipper.plist
 rm local-server/config.json
 ./install.sh
 ```
+
+Then re-enter the new token in the extension Settings.
 
 ## Uninstall
 

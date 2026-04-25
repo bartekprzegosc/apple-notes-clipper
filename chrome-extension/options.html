@@ -87,8 +87,11 @@
 
   <div class="field">
     <label>Secret Token</label>
-    <input type="text" id="token" placeholder="Paste token from setup.js output">
-    <div class="hint">Generated during server setup</div>
+    <div style="position:relative">
+      <input type="password" id="token" placeholder="Paste token from setup.js output" style="padding-right:60px">
+      <button type="button" id="toggleToken" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:12px;color:#8b7355;cursor:pointer;padding:2px 6px;font-weight:600">Show</button>
+    </div>
+    <div class="hint">Generated during server setup — stored locally in your browser only</div>
   </div>
 
   <div class="field">

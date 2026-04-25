@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await checkServerStatus()
 
   document.getElementById('optionsLink').addEventListener('click', () => {
-    chrome.runtime.openOptionsPage()
+    chrome.tabs.create({ url: chrome.runtime.getURL('options.html') })
   })
 
   document.getElementById('clipBtn').addEventListener('click', async () => {

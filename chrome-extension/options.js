@@ -1,4 +1,12 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const tokenInput = document.getElementById('token')
+  const toggleBtn = document.getElementById('toggleToken')
+  toggleBtn.addEventListener('click', () => {
+    const isPassword = tokenInput.type === 'password'
+    tokenInput.type = isPassword ? 'text' : 'password'
+    toggleBtn.textContent = isPassword ? 'Hide' : 'Show'
+  })
+
   chrome.storage.local.get(['token', 'port', 'notesFolder'], (config) => {
     document.getElementById('port').value = config.port || 3333
     document.getElementById('token').value = config.token || ''
